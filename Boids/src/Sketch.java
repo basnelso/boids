@@ -4,6 +4,9 @@ import processing.core.*;
 
 public class Sketch extends PApplet {	
 	Flock flock;
+	GUI gui;
+	Configuration config;
+	
     public static void main(String[] args) {
         PApplet.main("Sketch");
     }
@@ -12,20 +15,24 @@ public class Sketch extends PApplet {
         size(1000, 1000);
     }
 
-    
-    
-    
     public void setup(){
         // Generate new Flock of 50 boids
-    	flock = new Flock(100, this);
+    	config = new Configuration();
+    	gui = new GUI(config, this);
+    	flock = new Flock(200, this, config);
     	noStroke();
     }
 
     public void draw(){
         // Draw each boid
     	background(255);
-        flock.drawBoids();
         flock.updateBoids();
+        flock.drawBoids();
+        gui.drawGUI();
+    }
+    
+    public void mousePressed() {
+    	gui.mousePressed();
     }
     
 }

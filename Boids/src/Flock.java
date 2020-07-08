@@ -1,54 +1,56 @@
-import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import processing.core.PApplet;
 import processing.core.PConstants;
 import processing.core.PVector;
-import processing.core.PGraphics;
 
 public class Flock {
 	ArrayList<Boid> boids;
-	Set<Boid> tracked_boids;
+	Set<Boid> seenByTrackedBoids;
+	Configuration config;
+	boolean showCohesion, showAlignment, showSeparation;
+	
 	final PApplet p; // Gives access to processing functions
 	
-	final int BOID_SIZE = 5;
-	final float BOID_TIP_ANGLE = 30.0f;
-	
-	final float VISION_RADIUS = 250.0f;
-	final float SEPERATION_RADIUS = 40.0f;
-	
-	final float COHESION_CONSTANT = 0.05f;
-	final float ALIGNMENT_CONSTANT = 0.125f;
-	final float SEPARATION_CONSTANT = 0.05f; // Prob good
-	
-	final float MAX_SPEED = 7;
-	final float MIN_SPEED = 2;
-	final int THINK_TIME = 5;
-	
 	// Flock Constructor
-	Flock(int num, final PApplet p) {
+	Flock(int num, final PApplet p, Configuration config) {
 		boids = new ArrayList<Boid>(num);
+		seenByTrackedBoids = new HashSet<Boid>();
+		
+		// Get configuration details
+		this.config = config;
+		
 		// Add {num} boids in randomly selected positions
 		for (int i = 0; i < num; i++) {
 			boids.add(new Boid(p.random(0, p.width), p.random(0, p.height)));
 		}
 		// Pickup the PApplet to have access to processing functions
 		this.p = p;
+
+		
+		// Manually set visual trackers
+		showCohesion = true;
+		showAlignment = true;
+		showSeparation = true;
 		
 		// Manually add some tracked boids
-		boids.get(0).tracked = true;
-		boids.get(1).tracked = true;
+		boids.get(0).isTracked = true;
+		boids.get(1).isTracked = true;
+
 	}
 
 	// Method that iterates through the set of boids and draws each one
 	public void drawBoids() {
 		// Draw each boid in the flock
 		for (Boid b : this.boids) {
-			if (b.tracked) {
-				b.drawBoid(p.color(0, 0, 255), p.color(0, 0, 255, 10));
+			// Select the color scheme based on parameters of boid.
+			if (b.isTracked) {
+				b.drawBoid(p.color(0, 0, 255), p.color(0, 0, 255, 10), p.color(0, 0, 255, 100));
+			} else if (this.seenByTrackedBoids.contains(b)) {
+				b.drawBoid(p.color(0), null, p.color(0, 0, 0, 100));
 			} else {
-				b.drawBoid(p.color(0, 0, 0), p.color(255, 255, 255, 10));
+				b.drawBoid(p.color(150), null, null);
 			}
 		}
 	}
@@ -56,9 +58,17 @@ public class Flock {
 	// Method that iterates through the set of boids and updates the position of
 	// each one based on its velocity and angle
 	public void updateBoids() {
+		// Reset the boids that tracked boids can see
+		this.seenByTrackedBoids = new HashSet<>();
+		
 		// Update each boid in the flock
 		for (Boid b : this.boids) {
 			b.updateBoid();
+			
+			// Gather all boids tracked boids saw
+			if (b.isTracked) {
+				this.seenByTrackedBoids.addAll(b.seen);
+			}
 		}
 	}
 
@@ -67,26 +77,23 @@ public class Flock {
 		Set<Boid> seen;
 		int thinkTimer;
 		float angle;
-		boolean tracked, seenByTracked;
+		boolean isTracked;
 		
 		Boid(float x, float y) {
 			pos = new PVector(x, y);
 			posOld = new PVector(0, 0);
-			velocity = PVector.random2D().mult((3*MAX_SPEED)/4); //new PVector(0, 0);
+			float startingVelocity = (3*config.MAX_SPEED)/4;
+			velocity = PVector.random2D().mult(startingVelocity);
 			seen = new HashSet<Boid>();
-			thinkTimer = (int) Math.random()*THINK_TIME;
-			angle = 90;
-			tracked = false;
-			seenByTracked = false;
+			thinkTimer = (int) Math.random()*config.THINK_TIME;
+			angle = 0;
+			isTracked = false;
 		}
 
 		private void updateBoid() {
-			// Reset seen status
-			this.seenByTracked = false;
-
 			// Only make decisions every couple instances
 			if (thinkTimer == 0) {
-				thinkTimer = THINK_TIME;
+				thinkTimer = config.THINK_TIME;
 				
 				// Get all seen boids
 				this.vision();
@@ -97,13 +104,13 @@ public class Flock {
 				PVector separationV = this.separation();
 
 				// Calculate new velocity based on the selected rules
-				//this.velocity.add(cohesionV.mult(COHESION_CONSTANT));
-				//this.velocity.add(alignmentV.mult(ALIGNMENT_CONSTANT));
-				this.velocity.add(separationV.mult(SEPARATION_CONSTANT));
+				this.velocity.add(cohesionV.mult(config.COHESION_CONSTANT));
+				this.velocity.add(alignmentV.mult(config.ALIGNMENT_CONSTANT));
+				this.velocity.add(separationV.mult(config.SEPARATION_CONSTANT));
 
 				// Upper and lower limit checks on velocity
 				float mag = this.velocity.mag();
-				mag = Math.min(Math.max(mag, MIN_SPEED), MAX_SPEED);
+				mag = Math.min(Math.max(mag, config.MIN_SPEED), config.MAX_SPEED);
 				this.velocity.setMag(mag);
 				
 				// Check if boid went off the screen. If so, encourage it to come back.
@@ -133,35 +140,45 @@ public class Flock {
 
 		// Private method that computes the vertices and draws a single boid based on movement angle
 		// First input is boid color and second input is vision color
-		private void drawBoid(int boid_c, int vison_c) {
-			
-			// If this boid is in the vision range of a tracked boid, highlight it.
-			if (this.seenByTracked) {
-				boid_c = p.color(0, 255, 0);				
-			} else {
-				p.fill(boid_c);
-			}
-			
-			// If tracking this boid, draw lines to boids in its vision radius
-			if (this.tracked) {
-				for (Boid b : this.seen) {
-					p.stroke(255,0,0);
-					p.line(this.pos.x, this.pos.y, b.pos.x, b.pos.y);
-					p.noStroke();
+		private void drawBoid(Integer boidC, Integer visC, Integer velC) {
+			if (this.isTracked) {
+				// Draw lines to all boids in vision radius
+				if (config.showSeparation) {
+					for (Boid b : this.seen) {
+						p.stroke(255,0,0);
+						p.strokeWeight(1);
+						p.line(this.pos.x, this.pos.y, b.pos.x, b.pos.y);
+						p.noStroke();
+					}
 				}
+
 			}
 			
-			// Draw the actual boid
+			// Set up position and rotation of boid.
 		    p.pushMatrix();
 		    p.translate(this.pos.x, this.pos.y);
 		    p.rotate((float) Math.toRadians(this.angle));
+		    
+		    // Draw vision radius.
+		    if (visC != null) {
+			    p.fill(visC);
+			    p.arc(0, 0, config.VISION_RADIUS, config.VISION_RADIUS, (float) Math.toRadians(-135), (float) Math.toRadians(135));
+		    }
+		    // Draw velocity tail.
+		    if (velC != null && config.showAlignment) {
+		    	p.stroke(velC);
+				p.strokeWeight(1);
+		    	p.line(0, 0, config.BOID_VELOCITY_TAIL, 0);
+		    	p.noStroke();
+		    }
+		    
+		    // Draw actual boid body.
+			p.fill(boidC);
 		    p.beginShape();
-		    p.vertex(2*BOID_SIZE, 0);
-		    p.vertex(-BOID_SIZE, BOID_SIZE);
-		    p.vertex(-BOID_SIZE, -BOID_SIZE);
+		    p.vertex(2*config.BOID_SIZE, 0);
+		    p.vertex(-config.BOID_SIZE, config.BOID_SIZE);
+		    p.vertex(-config.BOID_SIZE, -config.BOID_SIZE);
 		    p.endShape(PConstants.CLOSE);
-		    p.fill(vison_c);
-		    p.arc(0, 0, VISION_RADIUS, VISION_RADIUS, (float) Math.toRadians(-135), (float) Math.toRadians(135));
 		    p.popMatrix();
 			
 			
@@ -185,44 +202,35 @@ public class Flock {
 				PVector p1 = b.pos;
 				PVector p2 = this.pos;
 				double dist = PVector.dist(p1, p2);
-
+				boolean seen = false;
 				// If distance is less then vision radius then this boid can see other boid.
-				if (dist < VISION_RADIUS/2 && dist > 0) {
+				if (dist < config.VISION_RADIUS/2 && b != this) {
 					// Because we don't want this boid to see boids that are behind it. We will
 					// check angles to determine if this boid can actually see the other boid.		
 					
-					// Get the angle opposite this boids movement.
-					float reverseAngle = this.angle;
-					// Normalize reversed angle
-					if (reverseAngle > 180) {
-						reverseAngle = -180 + (reverseAngle - 180);
-					} else if (reverseAngle < -180) {
-						reverseAngle = -(reverseAngle % 180);
-					}
-								
 					// Calculate angle between this boid and the seen one.
 					float angleBetween = this.calculateAngle(this.pos, b.pos);
 
-					// Check if this angle is within 45 degrees of the reversed angle in either direction.
-					if (Math.abs(angleBetween - reverseAngle) > 45) {
-						if (reverseAngle > 135) {
-							if (angleBetween < -135 - (180 - reverseAngle)) {
-								// dont do anything
-							} else {
-								this.seen.add(b);
+					// Check that angle is further then 45 degrees away from movement angle.
+					if (Math.abs(angleBetween - this.angle) > 45) {
+						// Most likely other boid is within the sight angle of this boid.
+						// Just need to check and two edge cases.
+						if (this.angle > 135) {
+							if (angleBetween > -135 - (180 - this.angle)) {
+								seen = true; // Possible edge case but still in vision.
 							}
-						}
-						else if (reverseAngle < -135) {
-							if (angleBetween > 135 + (180 + reverseAngle)) {
-								//dont do anything
-							} else {
-								this.seen.add(b);
-
+						} else if (this.angle < -135) {
+							if (angleBetween < 135 + (180 + this.angle)) {
+								seen = true; // Possible edge case but still in vision.
 							}
-						} else {
-							this.seen.add(b);
+						} else { // Movement angle is not a part of an edge case
+							seen = true;
 						}
 					}
+				}
+				
+				if (seen) {
+					this.seen.add(b);
 				}
 			}
 		}
@@ -235,27 +243,40 @@ public class Flock {
 			for (Boid b : this.seen) {
 				avgPos.add(b.pos);
 			}
-			avgPos.div(this.seen.size());
 
-			// Calculate the acceleration the boid would require to move to the avg position
-			// in 1 time interval.
-			PVector acelRequired = PVector.sub(avgPos, this.pos);
-			return acelRequired;
+			// Calculate movement required to reach average position in 1 time instance.
+			if (this.seen.size() > 0) {
+				avgPos.div(this.seen.size());
+				
+				if (this.isTracked && config.showCohesion) {
+					p.fill(0);
+					p.circle(avgPos.x, avgPos.y, 25);;
+				}
+				return PVector.sub(avgPos, this.pos);
+			} else { // If no boids in vision radius rule doesn't apply.
+				return new PVector(0,0);
+			}
 		}
 
 		// Method that returns a velocity that will make the boid move more similarly to
 		// its flockmates.
 		private PVector alignment() {
-			PVector avgVel = new PVector(0, 0);
+			PVector velocityRequired = new PVector(0, 0);
+			PVector avgVelocity = new PVector(0,0);
+			
+			// Look at each boid in this boid's vision
 			for (Boid b : this.seen) {
-				avgVel.add(b.velocity.copy());
+				avgVelocity.add(b.velocity.copy());
 			}
-			avgVel.div(this.seen.size());
-
-			// Calculate the acceleration needed for current boid to reach the velocity of
-			// flockmates in 1 time instance.s
-			PVector acelRequired = PVector.sub(avgVel, this.velocity.copy());
-			return acelRequired;
+			
+			// Calculate velocity change required to reach average velocity of group in 1 time instance.
+			if (this.seen.size() > 0) {
+				avgVelocity.div(this.seen.size());
+				velocityRequired = PVector.sub(avgVelocity, this.velocity.copy());
+				return velocityRequired;
+			} else { // If no boids in vision radius rule doesn't apply.
+				return new PVector(0, 0);
+			}
 		}
 
 		// Method that calculates a velocity to move the boid away from other boids that
@@ -265,7 +286,7 @@ public class Flock {
 			// Look at each boid in vision
 			for (Boid b : this.seen) {
 				// Need to move away from any boids that are too close.
-				if (PVector.dist(b.pos, this.pos) < SEPERATION_RADIUS) {
+				if (PVector.dist(b.pos, this.pos) < config.SEPERATION_RADIUS) {
 					// Calculate best position to move to
 					PVector diff = PVector.sub(b.pos, this.pos);
 					velocityRequired.sub(diff);
